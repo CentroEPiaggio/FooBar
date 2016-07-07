@@ -2,12 +2,11 @@
 
 <launch>
     <node pkg="foobar" type="foobar_node" name="foobar" output="screen">
-        <param name="plane_tolerance" value="0.02"/>
+        <param name="plane_tolerance" value="0.03"/>
         <param name="bar_tolerance" value="0.05"/>
         <param name="bar_width" value="0.048"/>
         <param name="bar_length" value="1.08"/>
         <param name="input_topic" value="/pacman_vision/processed_scene"/>
         <param name="reference_frame" value="/camera_rgb_optical_frame"/>
-        <param name="invert_z_projection" value="true"/>
     </node>
 </launch>

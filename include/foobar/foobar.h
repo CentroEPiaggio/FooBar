@@ -37,6 +37,7 @@
 #include <pcl/point_types.h>
 #include <pcl/common/common.h>
 #include <pcl/common/impl/common.hpp>
+#include <pcl/common/transforms.h>
 #include <pcl/segmentation/sac_segmentation.h>
 #include <pcl/sample_consensus/method_types.h>
 #include <pcl/sample_consensus/model_types.h>
@@ -82,6 +83,7 @@ namespace foobar
         tf::TransformBroadcaster brcaster_;
         tf::Transform transf_;
         bool processing;
+        double found_len, found_wid;
         //PCL
         PtC::Ptr cloud_;
         pcl::SACSegmentation<Pt> sac;
@@ -89,13 +91,11 @@ namespace foobar
         std::string topic_, frame_;
         double tolerance_, plane_tol_;
         double width_, length_;
-        double normals_rad_;
         ///Worker functions
         void broadcast(); //Tf
         void publishMarkers(); //rviz marker
         void find_it(); //actual computation
-        void removeIndices(const PtC::ConstPtr& source, PtC::Ptr dest,
-                pcl::PointIndices::Ptr ind);
+        void removeIndices(PtC::Ptr& source, pcl::PointIndices::Ptr ind); //helper to remove a set of indices from source
     };
 }
 #endif //_INCL_FOOBAR_H_

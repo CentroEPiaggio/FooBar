@@ -35,7 +35,8 @@
 namespace foobar
 {
 
-FooBar::FooBar(const std::string name_space): processing(false)
+FooBar::FooBar(const std::string name_space): processing(false), found_len(.0),
+    found_wid(.0)
 {
     nh_ = boost::make_shared<ros::NodeHandle>(name_space);
     /* nh_->param<double>("cluster_tolerance", clus_tol_, 0.005); */
@@ -45,20 +46,19 @@ FooBar::FooBar(const std::string name_space): processing(false)
     nh_->param<std::string>("input_topic", topic_, "/pacman_vision/processed_scene");   //TODO change accordingly
     nh_->param<std::string>("reference_frame", frame_, "/camera_rgb_optical_frame");
     nh_->param<double>("bar_tolerance", tolerance_, 0.05);
-    nh_->param<double>("plane_tolerance", plane_tol_, 0.02);
+    nh_->param<double>("plane_tolerance", plane_tol_, 0.03);
     nh_->param<double>("bar_width", width_, 0.048);
     nh_->param<double>("bar_length", length_, 1.08);
-    nh_->param<double>("normals_radius", normals_rad_, 0.01); //Should be approx 2.5~3 times point density
-    sub_ = nh_->subscribe(nh_->resolveName(topic_), 0, &FooBar::cbCloud, this);
+    sub_ = nh_->subscribe(nh_->resolveName(topic_), 1, &FooBar::cbCloud, this);
     transf_.setIdentity();
 }
 
 void FooBar::spinOnce()
 {
-    ros::spinOnce();
     find_it();
     broadcast();
     publishMarkers();
+    ros::spinOnce();
 }
 
 void FooBar::broadcast()
@@ -89,16 +89,15 @@ void FooBar::cbCloud(const sensor_msgs::PointCloud2::ConstPtr &msg)
     }
 }
 
-void FooBar::removeIndices(const PtC::ConstPtr& source, PtC::Ptr dest,
-        pcl::PointIndices::Ptr ind)
+void FooBar::removeIndices(PtC::Ptr& source, pcl::PointIndices::Ptr ind)
 {
     pcl::ExtractIndices<Pt> ex;
-    if (!dest)
-        dest = boost::make_shared<PtC>();
+    PtC::Ptr leftover = boost::make_shared<PtC>();
     ex.setInputCloud(source);
     ex.setIndices(ind);
     ex.setNegative(true);
-    ex.filter(*dest);
+    ex.filter(*leftover);
+    source = leftover;
 }
 
 void FooBar::find_it()
@@ -130,9 +129,8 @@ void FooBar::find_it()
         Eigen::Vector4f centroid;
         if (!pcl::compute3DCentroid(*plane, centroid)){
             ROS_WARN("[FooBar::%s]Cannot calculate centroid for plane, discaring it.",__func__);
-            PtC::Ptr leftover;
-            removeIndices(cloud_, leftover, inliers);
-            cloud_ = leftover;
+            removeIndices(cloud_, inliers);
+            boost::this_thread::sleep(boost::posix_time::milliseconds(10));
             continue;
         }
         //Find the nearest plane point to the centroid
@@ -154,34 +152,63 @@ void FooBar::find_it()
         Eigen::Vector3f pcaX = pcaXYZ.block<3,1>(0,0);
         //Put Z axis as the normal of the plane (already computed)
         Eigen::Vector3f Z (coeff->values[0], coeff->values[1], coeff->values[2]);
+        Z.normalize();
+        //See if we need to flip normal towards the camera, assuming viewpoint is (0,0,0)
+        Eigen::Vector3f cen(center.x,center.y,center.z);
+        float cos_theta = (-cen).dot(Z);
+        if (cos_theta < 0)
+            //Normal has to be flipped
+            Z *= -1;
         //Now find an X axis as close as possible to pcaX but normal to Z,
         //then find also Y as cross prod
         Eigen::Vector3f X,Y;
-        Z.normalize();
         pcaX.normalize();
         if ( Z.isApprox(pcaX, 1e-4)){ //should never happen that Z==pcaX
             ROS_WARN("[FooBar::%s]Cannot find a suitable basis for plane, discaring it.",__func__);
-            PtC::Ptr leftover;
-            removeIndices(cloud_, leftover, inliers);
-            cloud_ = leftover;
+            removeIndices(cloud_, inliers);
+            boost::this_thread::sleep(boost::posix_time::milliseconds(10));
             continue;
         }
         X = pcaX - Z*(Z.dot(pcaX));
         X.normalize();
         Y = Z.cross(X);
         Y.normalize();
-
-        //TODO just show the first cluster transform
-        tf::Matrix3x3 rot(X[0],Y[0],Z[0],
-                X[1],Y[1],Z[1],
-                X[2],Y[2],Z[2]);
-        tf::Vector3 trals(center.x,center.y,center.z);
+        //Homo-transform (bar frame"b" with respect to the camera"k")
+        Eigen::Matrix4f Tkb;
+        Tkb <<  X[0], Y[0], Z[0], center.x,
+                X[1], Y[1], Z[1], center.y,
+                X[2], Y[2], Z[2], center.z,
+                0,     0,    0,      1;
+        PtC::Ptr plane_transformed = boost::make_shared<PtC>();
+        Eigen::Matrix4f Tbk = Tkb.inverse();
+        //transform the plane cloud into its reference frame
+        pcl::transformPointCloud(*plane, *plane_transformed, Tbk);
+        //now the plane dimensions can be extracted easily
+        Pt min,max;
+        pcl::getMinMax3D(*plane_transformed, min,max);
+        found_len = max.x - min.x;
+        found_wid = max.y - min.y;
+        //The Check for Bar identification
+        if (found_len < (length_ - tolerance_) || found_len > (length_ + tolerance_) ||
+            found_wid < (width_ - tolerance_) || found_wid > (width_ + tolerance_)){
+            //This is not our bar, discard it
+            ROS_WARN("[FooBar::%s]Found a plane, but it is not our bar (%g x %g), discaring it.",__func__,
+                    found_len, found_wid);
+            removeIndices(cloud_, inliers);
+            boost::this_thread::sleep(boost::posix_time::milliseconds(10));
+            continue;
+        }
+        //This plane is our bar!!
+        tf::Matrix3x3 rot(  Tkb(0,0),Tkb(0,1),Tkb(0,2),
+                            Tkb(1,0),Tkb(1,1),Tkb(1,2),
+                            Tkb(2,0),Tkb(2,1),Tkb(2,2));
+        tf::Vector3 trals(Tkb(0,3),Tkb(1,3),Tkb(2,3));
         transf_.setBasis(rot);
         transf_.setOrigin(trals);
         break;
-        boost::this_thread::sleep(boost::posix_time::milliseconds(10));
     }
     processing = false;
+    ROS_INFO("[FooBar::%s]DONE",__func__);
 }
 
 } //End namespace
