@@ -30,8 +30,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef _INCL_SACBAR_H_
-#define _INCL_SACBAR_H_
+#ifndef _INCL_FOOBAR_H_
+#define _INCL_FOOBAR_H_
 
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -49,22 +49,14 @@
 #include <tf/transform_broadcaster.h>
 #include <visualization_msgs/MarkerArray.h>
 
-namespace sacbar
+namespace foobar
 {
-    bool enforceCurvature (const pcl::PointXYZRGBNormal& a, const pcl::PointXYZRGBNormal b, float s_dist)
-    {
-        Eigen::Map<const Eigen::Vector3f> a_normal = a.normal, b_normal = b.normal;
-        if (std::fabs(a_normal.dot(b_normal))> 0.9995){
-            return (true);
-        }
-        return (false);
-    }
 
-    class SacBar
+    class FooBar
     {
         public:
-        SacBar()=delete;
-        SacBar(const std::string name_space);
+        FooBar()=delete;
+        FooBar(const std::string name_space);
 
         ///Get NodeHandle
         inline ros::NodeHandle getNodeHandle() const
@@ -89,12 +81,12 @@ namespace sacbar
         pcl::NormalEstimationOMP<pcl::PointXYZRGB, pcl::PointXYZRGBNormal> ne;
         //params
         std::string topic_, frame_;
-        double tolerance_;
+        double tolerance_, clus_tol_;
         double width_, length_;
         ///Worker functions
         void broadcast(); //Tf
         void publishMarkers(); //rviz marker
-        void sac_it(); //actual computation
+        void find_it(); //actual computation
     };
 }
-#endif //_INCL_SACBAR_H_
+#endif //_INCL_FOOBAR_H_

@@ -30,12 +30,12 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include <sacbar/sacbar.h>
+#include <foobar/foobar.h>
 
 int main(int argc, char *argv[])
 {
-    ros::init(argc, argv, "sacbar");
-    sacbar::SacBar node("sacbar");
+    ros::init(argc, argv, "foobar");
+    foobar::FooBar node("foobar");
     //Try to go at 30hz
     ros::Rate rate(30);
     while (ros::ok())
