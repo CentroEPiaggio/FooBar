@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+
+<launch>
+    <node pkg="fruit_samurai" type="fruit_samurai_node" name="fruit_samurai" output="screen">
+        <param name="cluster_tolerance" value="0.005"/>
+        <param name="cluster_min_size" value="1000"/>
+        <param name="cluster_max_size" value="50000"/>
+        <param name="input_topic" value="/pacman_vision/processed_scene"/>
+        <param name="reference_frame" value="/qb_delta_base"/>
+        <param name="invert_z_projection" value="true"/>
+    </node>
+</launch>
