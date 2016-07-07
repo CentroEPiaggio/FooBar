@@ -50,6 +50,7 @@ FooBar::FooBar(const std::string name_space): processing(false), found_len(.0),
     nh_->param<double>("bar_width", width_, 0.048);
     nh_->param<double>("bar_length", length_, 1.08);
     sub_ = nh_->subscribe(nh_->resolveName(topic_), 1, &FooBar::cbCloud, this);
+    pub_marks_ = nh_->advertise<visualization_msgs::MarkerArray>("markers",1);
     transf_.setIdentity();
 }
 
@@ -70,7 +71,10 @@ void FooBar::broadcast()
 
 void FooBar::publishMarkers()
 {
-    //TODO
+    if (!marks)
+        return;
+    pub_marks_.publish(marks);
+    marks.reset();
 }
 
 void FooBar::cbCloud(const sensor_msgs::PointCloud2::ConstPtr &msg)
@@ -195,6 +199,7 @@ void FooBar::find_it()
             ROS_WARN("[FooBar::%s]Found a plane, but it is not our bar (%g x %g), discaring it.",__func__,
                     found_len, found_wid);
             removeIndices(cloud_, inliers);
+            createMarker(found_len,found_wid,Tkb); //tmp visualization
             boost::this_thread::sleep(boost::posix_time::milliseconds(10));
             continue;
         }
@@ -209,6 +214,36 @@ void FooBar::find_it()
     }
     processing = false;
     ROS_INFO("[FooBar::%s]DONE",__func__);
+}
+
+void FooBar::createMarker(double dimx, double dimy, const Eigen::Matrix4f &trans)
+{
+    if (!marks)
+        marks = boost::make_shared<visualization_msgs::MarkerArray>();
+    visualization_msgs::Marker m;
+    m.header.frame_id = frame_;
+    m.header.stamp = ros::Time();
+    m.ns = "plane";
+    m.id = std::round(0.5*(dimx+dimy)*(dimx+dimy+1)+dimy);
+    m.type = visualization_msgs::Marker::CUBE;
+    m.action = visualization_msgs::Marker::ADD;
+    m.pose.position.x = trans(0,3);
+    m.pose.position.y = trans(1,3);
+    m.pose.position.z = trans(2,3);
+    Eigen::Quaternionf q(trans.block<3,3>(0,0));
+    m.pose.orientation.x = q.x();
+    m.pose.orientation.y = q.y();
+    m.pose.orientation.z = q.z();
+    m.pose.orientation.w = q.w();
+    m.scale.x = dimx;
+    m.scale.y = dimy;
+    m.scale.z = plane_tol_;
+    m.color.a=0.7;
+    m.color.r=0.5;
+    m.color.b=1.0;
+    m.color.g=0.1;
+    m.lifetime = ros::Duration(1);
+    marks->markers.push_back(m);
 }
 
 } //End namespace

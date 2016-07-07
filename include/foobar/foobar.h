@@ -80,6 +80,7 @@ namespace foobar
         boost::shared_ptr<ros::NodeHandle> nh_;
         ros::Subscriber sub_;
         ros::Publisher pub_marks_;
+        visualization_msgs::MarkerArray::Ptr marks;
         tf::TransformBroadcaster brcaster_;
         tf::Transform transf_;
         bool processing;
@@ -96,6 +97,7 @@ namespace foobar
         void publishMarkers(); //rviz marker
         void find_it(); //actual computation
         void removeIndices(PtC::Ptr& source, pcl::PointIndices::Ptr ind); //helper to remove a set of indices from source
+        void createMarker(double dimx, double dimy, const Eigen::Matrix4f &trans);
     };
 }
 #endif //_INCL_FOOBAR_H_
