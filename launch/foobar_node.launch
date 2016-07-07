@@ -2,8 +2,8 @@
 
 <launch>
     <node pkg="foobar" type="foobar_node" name="foobar" output="screen">
-        <param name="cluster_tolerance" value="0.02"/>
-        <param name="tolerance" value="0.05"/>
+        <param name="plane_tolerance" value="0.02"/>
+        <param name="bar_tolerance" value="0.05"/>
         <param name="bar_width" value="0.048"/>
         <param name="bar_length" value="1.08"/>
         <param name="input_topic" value="/pacman_vision/processed_scene"/>

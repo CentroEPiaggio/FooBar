@@ -37,10 +37,14 @@
 #include <pcl/point_types.h>
 #include <pcl/common/common.h>
 #include <pcl/common/impl/common.hpp>
-#include <pcl/features/normal_3d_omp.h>
-#include <pcl/segmentation/conditional_euclidean_clustering.h>
+#include <pcl/segmentation/sac_segmentation.h>
+#include <pcl/sample_consensus/method_types.h>
+#include <pcl/sample_consensus/model_types.h>
+#include <pcl/ModelCoefficients.h>
 #include <pcl/filters/extract_indices.h>
 #include <pcl/common/centroid.h>
+#include <pcl/common/pca.h>
+#include <pcl/search/kdtree.h>
 #include <pcl_ros/point_cloud.h>
 #include <sensor_msgs/point_cloud_conversion.h>
 #include <ros/console.h>
@@ -51,6 +55,8 @@
 
 namespace foobar
 {
+    typedef pcl::PointXYZRGB Pt; //default point type
+    typedef pcl::PointCloud<Pt> PtC; //default point cloud
 
     class FooBar
     {
@@ -67,26 +73,29 @@ namespace foobar
         void spinOnce();
 
         private:
+        //ROS
         ///Callback to get input point cloud
         void cbCloud(const sensor_msgs::PointCloud2::ConstPtr &msg);
         boost::shared_ptr<ros::NodeHandle> nh_;
         ros::Subscriber sub_;
         ros::Publisher pub_marks_;
         tf::TransformBroadcaster brcaster_;
-
-        pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_;
         tf::Transform transf_;
         bool processing;
-        pcl::ConditionalEuclideanClustering<pcl::PointXYZRGBNormal> cec;
-        pcl::NormalEstimationOMP<pcl::PointXYZRGB, pcl::PointXYZRGBNormal> ne;
+        //PCL
+        PtC::Ptr cloud_;
+        pcl::SACSegmentation<Pt> sac;
         //params
         std::string topic_, frame_;
-        double tolerance_, clus_tol_;
+        double tolerance_, plane_tol_;
         double width_, length_;
+        double normals_rad_;
         ///Worker functions
         void broadcast(); //Tf
         void publishMarkers(); //rviz marker
         void find_it(); //actual computation
+        void removeIndices(const PtC::ConstPtr& source, PtC::Ptr dest,
+                pcl::PointIndices::Ptr ind);
     };
 }
 #endif //_INCL_FOOBAR_H_
