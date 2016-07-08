@@ -49,6 +49,7 @@ FooBar::FooBar(const std::string name_space): processing(false), found_len(.0),
     nh_->param<double>("plane_tolerance", plane_tol_, 0.03);
     nh_->param<double>("bar_width", width_, 0.048);
     nh_->param<double>("bar_length", length_, 1.08);
+    nh_->param<int>("min_points", min_points_, 500);
     sub_ = nh_->subscribe(nh_->resolveName(topic_), 1, &FooBar::cbCloud, this);
     pub_marks_ = nh_->advertise<visualization_msgs::MarkerArray>("markers",1);
     transf_.setIdentity();
@@ -115,20 +116,31 @@ void FooBar::find_it()
         return;
     }
     processing = true;
-    while (cloud_->size()>50)
+    sac.setModelType (pcl::SACMODEL_PLANE);
+    sac.setMethodType (pcl::SAC_PROSAC);
+    sac.setDistanceThreshold(plane_tol_);
+    pcl::search::KdTree<Pt>::Ptr tree = boost::make_shared<pcl::search::KdTree<Pt>>();
+    sac.setSamplesMaxDist(plane_tol_, tree);
+    sac.setOptimizeCoefficients(true);
+    while (cloud_->size()>min_points_)
     {
         //Find and segment a plane
+        tree->setInputCloud(cloud_);
         sac.setInputCloud(cloud_);
         pcl::ModelCoefficients::Ptr coeff =
             boost::make_shared<pcl::ModelCoefficients>();
         pcl::PointIndices::Ptr inliers =
             boost::make_shared<pcl::PointIndices>();
-        sac.setModelType (pcl::SACMODEL_PLANE);
-        sac.setMethodType (pcl::SAC_RANSAC);
-        sac.setDistanceThreshold(plane_tol_);
         sac.segment(*inliers, *coeff);
         //oneliner overkill pointcloud initialization with plane inliers
         PtC::Ptr plane = boost::make_shared<PtC> (*cloud_, inliers->indices);
+        if (plane->size() < min_points_){
+            //plane is smaller than user set tolerance
+            ROS_WARN("[FooBar::%s]Found plane is too small (%d points), discaring it.",__func__,plane->size());
+            removeIndices(cloud_, inliers);
+            boost::this_thread::sleep(boost::posix_time::milliseconds(10));
+            continue;
+        }
         //find plane centroid
         Eigen::Vector4f centroid;
         if (!pcl::compute3DCentroid(*plane, centroid)){
@@ -138,15 +150,15 @@ void FooBar::find_it()
             continue;
         }
         //Find the nearest plane point to the centroid
-        pcl::search::KdTree<Pt> tree;
-        tree.setInputCloud(plane);
+        pcl::search::KdTree<Pt> ktree;
+        ktree.setInputCloud(plane);
         Pt pt_cent, center;
         pt_cent.x = centroid[0];
         pt_cent.y = centroid[1];
         pt_cent.z = centroid[2];
         std::vector<int> k_ind(1);
         std::vector<float> k_dist(1);
-        tree.nearestKSearch(pt_cent, 1, k_ind, k_dist);
+        ktree.nearestKSearch(pt_cent, 1, k_ind, k_dist);
         center = plane->points.at(k_ind[0]);
         //Get principal components of the cluster
         pcl::PCA<Pt> pca(true);
@@ -200,6 +212,11 @@ void FooBar::find_it()
                     found_len, found_wid);
             removeIndices(cloud_, inliers);
             createMarker(found_len,found_wid,Tkb); //tmp visualization
+            pcl::visualization::PCLVisualizer viz;
+            viz.addPointCloud(plane_transformed);
+            viz.addCoordinateSystem(0.1);
+            while (!viz.wasStopped())
+                viz.spinOnce(100);
             boost::this_thread::sleep(boost::posix_time::milliseconds(10));
             continue;
         }

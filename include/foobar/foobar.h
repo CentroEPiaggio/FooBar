@@ -47,6 +47,7 @@
 #include <pcl/common/pca.h>
 #include <pcl/search/kdtree.h>
 #include <pcl_ros/point_cloud.h>
+#include <pcl/visualization/pcl_visualizer.h>
 #include <sensor_msgs/point_cloud_conversion.h>
 #include <ros/console.h>
 #include <ros/common.h>
@@ -92,6 +93,7 @@ namespace foobar
         std::string topic_, frame_;
         double tolerance_, plane_tol_;
         double width_, length_;
+        int min_points_;
         ///Worker functions
         void broadcast(); //Tf
         void publishMarkers(); //rviz marker
