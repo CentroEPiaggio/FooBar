@@ -261,6 +261,7 @@ void FooBar::find_it()
             ROS_WARN("[FooBar::%s]Hypothesis discarded (%g x %g).",__func__,
                     found_len, found_wid);
             removeIndices(cloud_, inliers);
+            createMarker(found_len,found_wid,Tkb); //add to publishing
             boost::this_thread::sleep(boost::posix_time::milliseconds(10));
             continue;
         }
