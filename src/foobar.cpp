@@ -35,6 +35,16 @@
 namespace foobar
 {
 
+//global normal similarity check
+bool enforceCurvature (const pcl::PointXYZRGBNormal& a, const pcl::PointXYZRGBNormal& b, float s_dist)
+{
+    Eigen::Map<const Eigen::Vector3f> a_normal = a.normal, b_normal = b.normal;
+    if (std::fabs(a_normal.dot(b_normal))> 0.995){
+        return (true);
+    }
+    return (false);
+}
+
 FooBar::FooBar(const std::string name_space): processing(false), found_len(.0),
     found_wid(.0)
 {
@@ -45,11 +55,12 @@ FooBar::FooBar(const std::string name_space): processing(false), found_len(.0),
     /* nh_->param<int>("cluster_max_size", max_size_, 10000); */
     nh_->param<std::string>("input_topic", topic_, "/pacman_vision/processed_scene");   //TODO change accordingly
     nh_->param<std::string>("reference_frame", frame_, "/camera_rgb_optical_frame");
-    nh_->param<double>("bar_tolerance", tolerance_, 0.05);
-    nh_->param<double>("plane_tolerance", plane_tol_, 0.03);
-    nh_->param<double>("bar_width", width_, 0.048);
-    nh_->param<double>("bar_length", length_, 1.08);
-    nh_->param<int>("min_points", min_points_, 500);
+    nh_->param<double>("bar_tolerance", tolerance_, 0.1);
+    nh_->param<double>("cluster_tolerance", clus_tol_, 0.01);
+    nh_->param<double>("plane_tolerance", plane_tol_, 0.04);
+    nh_->param<double>("bar_width", width_, 0.05);
+    nh_->param<double>("bar_length", length_, 1.0);
+    nh_->param<int>("min_points", min_points_, 1000);
     sub_ = nh_->subscribe(nh_->resolveName(topic_), 1, &FooBar::cbCloud, this);
     pub_marks_ = nh_->advertise<visualization_msgs::MarkerArray>("markers",1);
     transf_.setIdentity();
@@ -117,7 +128,7 @@ void FooBar::find_it()
     }
     processing = true;
     sac.setModelType (pcl::SACMODEL_PLANE);
-    sac.setMethodType (pcl::SAC_PROSAC);
+    sac.setMethodType (pcl::SAC_RANSAC);
     sac.setDistanceThreshold(plane_tol_);
     pcl::search::KdTree<Pt>::Ptr tree = boost::make_shared<pcl::search::KdTree<Pt>>();
     sac.setSamplesMaxDist(plane_tol_, tree);
@@ -141,33 +152,72 @@ void FooBar::find_it()
             boost::this_thread::sleep(boost::posix_time::milliseconds(10));
             continue;
         }
-        //find plane centroid
-        Eigen::Vector4f centroid;
-        if (!pcl::compute3DCentroid(*plane, centroid)){
-            ROS_WARN("[FooBar::%s]Cannot calculate centroid for plane, discaring it.",__func__);
+        //compute normals
+        ne.setInputCloud(plane);
+        ne.setRadiusSearch(0.01); //assuming no downsampling occurred
+        ne.useSensorOriginAsViewPoint();
+        PnC::Ptr plane_and_normals = boost::make_shared<PnC>();
+        pcl::copyPointCloud(*plane,*plane_and_normals);
+        ne.compute(*plane_and_normals);
+        //Clusterize plane to enfore normal similarity
+        cec.setClusterTolerance(clus_tol_);
+        cec.setMinClusterSize(min_points_);
+        cec.setInputCloud(plane_and_normals);
+        cec.setConditionFunction(enforceCurvature);
+        std::vector<pcl::PointIndices> clus_indices;
+        cec.segment(clus_indices);
+        if (clus_indices.empty()){
+            //plane is not well defined
+            ROS_WARN("[FooBar::%s]Found plane is not well defined, discaring it.",__func__);
             removeIndices(cloud_, inliers);
             boost::this_thread::sleep(boost::posix_time::milliseconds(10));
             continue;
         }
-        //Find the nearest plane point to the centroid
-        pcl::search::KdTree<Pt> ktree;
-        ktree.setInputCloud(plane);
-        Pt pt_cent, center;
+        PnC::Ptr hypothesis;
+        std::size_t id(0);
+        for (std::size_t i=0; i<clus_indices.size(); ++i)
+        {
+            //iterate to find the biggest cluster
+            //we assume the bar is predominat cluster in the plane model
+            if (clus_indices[i].indices.size() > min_points_)
+                if (clus_indices[i].indices.size() > clus_indices[id].indices.size())
+                    id = i;
+        }
+        hypothesis = boost::make_shared<PnC> (*plane_and_normals, clus_indices[id].indices);
+        if (hypothesis->size() < min_points_){
+            //plane is smaller than user set tolerance
+            ROS_WARN("[FooBar::%s]Candidate Bar is too small (%d points), discaring it.",__func__,hypothesis->size());
+            removeIndices(cloud_, inliers);
+            boost::this_thread::sleep(boost::posix_time::milliseconds(10));
+            continue;
+        }
+        //find hypothesis centroid
+        Eigen::Vector4f centroid;
+        if (!pcl::compute3DCentroid(*hypothesis, centroid)){
+            ROS_WARN("[FooBar::%s]Cannot calculate centroid for hypothesis, discaring it.",__func__);
+            removeIndices(cloud_, inliers);
+            boost::this_thread::sleep(boost::posix_time::milliseconds(10));
+            continue;
+        }
+        //Find the nearest point to the centroid
+        pcl::search::KdTree<Pn> ktree;
+        ktree.setInputCloud(hypothesis);
+        Pn pt_cent, center;
         pt_cent.x = centroid[0];
         pt_cent.y = centroid[1];
         pt_cent.z = centroid[2];
         std::vector<int> k_ind(1);
         std::vector<float> k_dist(1);
         ktree.nearestKSearch(pt_cent, 1, k_ind, k_dist);
-        center = plane->points.at(k_ind[0]);
-        //Get principal components of the cluster
-        pcl::PCA<Pt> pca(true);
-        pca.setInputCloud(plane);
+        center = hypothesis->points.at(k_ind[0]);
+        //Get principal components of hypothesis
+        pcl::PCA<Pn> pca(true);
+        pca.setInputCloud(hypothesis);
         Eigen::Matrix3f pcaXYZ = pca.getEigenVectors();
         //First eigenvector should be along the bar length, lets put X axis there
         Eigen::Vector3f pcaX = pcaXYZ.block<3,1>(0,0);
-        //Put Z axis as the normal of the plane (already computed)
-        Eigen::Vector3f Z (coeff->values[0], coeff->values[1], coeff->values[2]);
+        //Put Z axis as the normal of the center (already computed)
+        Eigen::Vector3f Z (center.normal_x, center.normal_y, center.normal_z);
         Z.normalize();
         //See if we need to flip normal towards the camera, assuming viewpoint is (0,0,0)
         Eigen::Vector3f cen(center.x,center.y,center.z);
@@ -195,28 +245,22 @@ void FooBar::find_it()
                 X[1], Y[1], Z[1], center.y,
                 X[2], Y[2], Z[2], center.z,
                 0,     0,    0,      1;
-        PtC::Ptr plane_transformed = boost::make_shared<PtC>();
+        PnC::Ptr hypo_transformed = boost::make_shared<PnC>();
         Eigen::Matrix4f Tbk = Tkb.inverse();
-        //transform the plane cloud into its reference frame
-        pcl::transformPointCloud(*plane, *plane_transformed, Tbk);
-        //now the plane dimensions can be extracted easily
-        Pt min,max;
-        pcl::getMinMax3D(*plane_transformed, min,max);
+        //transform hypothesis cloud into its reference frame
+        pcl::transformPointCloud(*hypothesis, *hypo_transformed, Tbk);
+        //now the hypothesis dimensions can be extracted easily
+        Pn min,max;
+        pcl::getMinMax3D(*hypo_transformed, min,max);
         found_len = max.x - min.x;
         found_wid = max.y - min.y;
-        //The Check for Bar identification
+        //The Check for Bar hypothesis
         if (found_len < (length_ - tolerance_) || found_len > (length_ + tolerance_) ||
             found_wid < (width_ - tolerance_) || found_wid > (width_ + tolerance_)){
             //This is not our bar, discard it
-            ROS_WARN("[FooBar::%s]Found a plane, but it is not our bar (%g x %g), discaring it.",__func__,
+            ROS_WARN("[FooBar::%s]Hypothesis discarded (%g x %g).",__func__,
                     found_len, found_wid);
             removeIndices(cloud_, inliers);
-            createMarker(found_len,found_wid,Tkb); //tmp visualization
-            pcl::visualization::PCLVisualizer viz;
-            viz.addPointCloud(plane_transformed);
-            viz.addCoordinateSystem(0.1);
-            while (!viz.wasStopped())
-                viz.spinOnce(100);
             boost::this_thread::sleep(boost::posix_time::milliseconds(10));
             continue;
         }
@@ -227,10 +271,11 @@ void FooBar::find_it()
         tf::Vector3 trals(Tkb(0,3),Tkb(1,3),Tkb(2,3));
         transf_.setBasis(rot);
         transf_.setOrigin(trals);
+        createMarker(found_len,found_wid,Tkb); //add to publishing
+        ROS_INFO("[FooBar::%s]Found the Bar!",__func__);
         break;
     }
     processing = false;
-    ROS_INFO("[FooBar::%s]DONE",__func__);
 }
 
 void FooBar::createMarker(double dimx, double dimy, const Eigen::Matrix4f &trans)

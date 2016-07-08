@@ -41,13 +41,14 @@
 #include <pcl/segmentation/sac_segmentation.h>
 #include <pcl/sample_consensus/method_types.h>
 #include <pcl/sample_consensus/model_types.h>
+#include <pcl/segmentation/conditional_euclidean_clustering.h>
+#include <pcl/features/normal_3d_omp.h>
 #include <pcl/ModelCoefficients.h>
 #include <pcl/filters/extract_indices.h>
 #include <pcl/common/centroid.h>
 #include <pcl/common/pca.h>
 #include <pcl/search/kdtree.h>
 #include <pcl_ros/point_cloud.h>
-#include <pcl/visualization/pcl_visualizer.h>
 #include <sensor_msgs/point_cloud_conversion.h>
 #include <ros/console.h>
 #include <ros/common.h>
@@ -59,6 +60,8 @@ namespace foobar
 {
     typedef pcl::PointXYZRGB Pt; //default point type
     typedef pcl::PointCloud<Pt> PtC; //default point cloud
+    typedef pcl::PointXYZRGBNormal Pn; //point type with normals
+    typedef pcl::PointCloud<Pn> PnC; //point cloud with normals
 
     class FooBar
     {
@@ -89,9 +92,11 @@ namespace foobar
         //PCL
         PtC::Ptr cloud_;
         pcl::SACSegmentation<Pt> sac;
+        pcl::NormalEstimationOMP<Pt,Pn> ne;
+        pcl::ConditionalEuclideanClustering<Pn> cec;
         //params
         std::string topic_, frame_;
-        double tolerance_, plane_tol_;
+        double tolerance_, plane_tol_, clus_tol_;
         double width_, length_;
         int min_points_;
         ///Worker functions
