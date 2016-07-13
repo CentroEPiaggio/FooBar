@@ -26,6 +26,7 @@ find_package(catkin REQUIRED COMPONENTS
   tf_conversions
   pcl_ros
   sensor_msgs
+  dynamic_reconfigure
 )
 
 find_package(PCL REQUIRED)
@@ -76,6 +77,9 @@ link_directories(${PCL_LIBRARY_DIRS})
 #  geometry_msgs
 #)
 
+generate_dynamic_reconfigure_options(
+    cfg/FooBar.cfg
+    )
 ###################################
 ## catkin specific configuration ##
 ###################################
@@ -112,7 +116,7 @@ add_library(foobar
 ## Add cmake target dependencies of the library
 ## as an example, code may need to be generated before libraries
 ## either from message generation or dynamic reconfigure
-#add_dependencies(sacbar ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+add_dependencies(foobar foobar_gencfg)
 
 ## Declare a C++ executable
 add_executable(foobar_node

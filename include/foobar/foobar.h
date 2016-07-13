@@ -53,6 +53,8 @@
 #include <ros/console.h>
 #include <ros/common.h>
 #include <ros/package.h>
+#include <dynamic_reconfigure/server.h>
+#include <foobar/FooBarConfig.h>
 #include <tf/transform_broadcaster.h>
 #include <visualization_msgs/MarkerArray.h>
 
@@ -89,6 +91,8 @@ namespace foobar
         tf::Transform transf_;
         bool processing;
         double found_len, found_wid;
+        dynamic_reconfigure::Server<foobar::FooBarConfig> dyn_srv;
+        dynamic_reconfigure::Server<foobar::FooBarConfig>::CallbackType cb;
         //PCL
         PtC::Ptr cloud_;
         pcl::SACSegmentation<Pt> sac;
@@ -98,6 +102,7 @@ namespace foobar
         std::string topic_, frame_;
         double tolerance_, plane_tol_, clus_tol_;
         double width_, length_;
+        double normals_radius_;
         int min_points_;
         ///Worker functions
         void broadcast(); //Tf
@@ -105,6 +110,7 @@ namespace foobar
         void find_it(); //actual computation
         void removeIndices(PtC::Ptr& source, pcl::PointIndices::Ptr ind); //helper to remove a set of indices from source
         void createMarker(double dimx, double dimy, const Eigen::Matrix4f &trans);
+        void dyn_callback(foobar::FooBarConfig &config, uint32_t level);
     };
 }
 #endif //_INCL_FOOBAR_H_

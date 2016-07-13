@@ -60,10 +60,26 @@ FooBar::FooBar(const std::string name_space): processing(false), found_len(.0),
     nh_->param<double>("plane_tolerance", plane_tol_, 0.04);
     nh_->param<double>("bar_width", width_, 0.05);
     nh_->param<double>("bar_length", length_, 1.0);
+    nh_->param<double>("normals_radius", normals_radius_, 0.01);
     nh_->param<int>("min_points", min_points_, 1000);
     sub_ = nh_->subscribe(nh_->resolveName(topic_), 1, &FooBar::cbCloud, this);
     pub_marks_ = nh_->advertise<visualization_msgs::MarkerArray>("markers",1);
     transf_.setIdentity();
+    cb = boost::bind(&FooBar::dyn_callback, this, _1, _2);
+    dyn_srv.setCallback(cb);
+}
+
+void FooBar::dyn_callback(foobar::FooBarConfig &config, uint32_t level)
+{
+    topic_ = config.input_topic;
+    frame_ = config.reference_frame;
+    tolerance_ = config.bar_tolerance;
+    clus_tol_ = config.cluster_tolerance;
+    plane_tol_ = config.plane_tolerance;
+    width_ = config.bar_width;
+    length_ = config.bar_lenght;
+    normals_radius_ = config.normals_radius;
+    min_points_ = config.min_points;
 }
 
 void FooBar::spinOnce()
@@ -154,7 +170,7 @@ void FooBar::find_it()
         }
         //compute normals
         ne.setInputCloud(plane);
-        ne.setRadiusSearch(0.01); //assuming no downsampling occurred
+        ne.setRadiusSearch(normals_radius_);
         ne.useSensorOriginAsViewPoint();
         PnC::Ptr plane_and_normals = boost::make_shared<PnC>();
         pcl::copyPointCloud(*plane,*plane_and_normals);
