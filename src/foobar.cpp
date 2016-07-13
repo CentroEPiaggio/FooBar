@@ -143,67 +143,32 @@ void FooBar::find_it()
         return;
     }
     processing = true;
-    sac.setModelType (pcl::SACMODEL_PLANE);
-    sac.setMethodType (pcl::SAC_RANSAC);
-    sac.setDistanceThreshold(plane_tol_);
-    pcl::search::KdTree<Pt>::Ptr tree = boost::make_shared<pcl::search::KdTree<Pt>>();
-    sac.setSamplesMaxDist(plane_tol_, tree);
-    sac.setOptimizeCoefficients(true);
-    while (cloud_->size()>min_points_)
+    //compute normals
+    ne.setInputCloud(cloud_);
+    ne.setRadiusSearch(normals_radius_);
+    ne.useSensorOriginAsViewPoint();
+    PnC::Ptr plane_and_normals = boost::make_shared<PnC>();
+    pcl::copyPointCloud(*cloud_,*plane_and_normals);
+    ne.compute(*plane_and_normals);
+    //Clusterize plane to enfore normal similarity
+    cec.setClusterTolerance(clus_tol_);
+    cec.setMinClusterSize(min_points_);
+    cec.setInputCloud(plane_and_normals);
+    cec.setConditionFunction(enforceCurvature);
+    std::vector<pcl::PointIndices> clus_indices;
+    cec.segment(clus_indices);
+    if (clus_indices.empty()){
+        //plane is not well defined
+        ROS_WARN("[FooBar::%s]Found plane is not well defined, discaring it.",__func__);
+        return;
+    }
+    PnC::Ptr hypothesis;
+    for (std::size_t i=0; i<clus_indices.size(); ++i)
     {
-        //Find and segment a plane
-        tree->setInputCloud(cloud_);
-        sac.setInputCloud(cloud_);
-        pcl::ModelCoefficients::Ptr coeff =
-            boost::make_shared<pcl::ModelCoefficients>();
-        pcl::PointIndices::Ptr inliers =
-            boost::make_shared<pcl::PointIndices>();
-        sac.segment(*inliers, *coeff);
-        //oneliner overkill pointcloud initialization with plane inliers
-        PtC::Ptr plane = boost::make_shared<PtC> (*cloud_, inliers->indices);
-        if (plane->size() < min_points_){
-            //plane is smaller than user set tolerance
-            ROS_WARN("[FooBar::%s]Found plane is too small (%d points), discaring it.",__func__,plane->size());
-            removeIndices(cloud_, inliers);
-            boost::this_thread::sleep(boost::posix_time::milliseconds(10));
-            continue;
-        }
-        //compute normals
-        ne.setInputCloud(plane);
-        ne.setRadiusSearch(normals_radius_);
-        ne.useSensorOriginAsViewPoint();
-        PnC::Ptr plane_and_normals = boost::make_shared<PnC>();
-        pcl::copyPointCloud(*plane,*plane_and_normals);
-        ne.compute(*plane_and_normals);
-        //Clusterize plane to enfore normal similarity
-        cec.setClusterTolerance(clus_tol_);
-        cec.setMinClusterSize(min_points_);
-        cec.setInputCloud(plane_and_normals);
-        cec.setConditionFunction(enforceCurvature);
-        std::vector<pcl::PointIndices> clus_indices;
-        cec.segment(clus_indices);
-        if (clus_indices.empty()){
-            //plane is not well defined
-            ROS_WARN("[FooBar::%s]Found plane is not well defined, discaring it.",__func__);
-            removeIndices(cloud_, inliers);
-            boost::this_thread::sleep(boost::posix_time::milliseconds(10));
-            continue;
-        }
-        PnC::Ptr hypothesis;
-        std::size_t id(0);
-        for (std::size_t i=0; i<clus_indices.size(); ++i)
-        {
-            //iterate to find the biggest cluster
-            //we assume the bar is predominat cluster in the plane model
-            if (clus_indices[i].indices.size() > min_points_)
-                if (clus_indices[i].indices.size() > clus_indices[id].indices.size())
-                    id = i;
-        }
-        hypothesis = boost::make_shared<PnC> (*plane_and_normals, clus_indices[id].indices);
+        hypothesis = boost::make_shared<PnC> (*plane_and_normals, clus_indices[i].indices);
         if (hypothesis->size() < min_points_){
             //plane is smaller than user set tolerance
             ROS_WARN("[FooBar::%s]Candidate Bar is too small (%d points), discaring it.",__func__,hypothesis->size());
-            removeIndices(cloud_, inliers);
             boost::this_thread::sleep(boost::posix_time::milliseconds(10));
             continue;
         }
@@ -211,7 +176,6 @@ void FooBar::find_it()
         Eigen::Vector4f centroid;
         if (!pcl::compute3DCentroid(*hypothesis, centroid)){
             ROS_WARN("[FooBar::%s]Cannot calculate centroid for hypothesis, discaring it.",__func__);
-            removeIndices(cloud_, inliers);
             boost::this_thread::sleep(boost::posix_time::milliseconds(10));
             continue;
         }
@@ -247,7 +211,6 @@ void FooBar::find_it()
         pcaX.normalize();
         if ( Z.isApprox(pcaX, 1e-4)){ //should never happen that Z==pcaX
             ROS_WARN("[FooBar::%s]Cannot find a suitable basis for plane, discaring it.",__func__);
-            removeIndices(cloud_, inliers);
             boost::this_thread::sleep(boost::posix_time::milliseconds(10));
             continue;
         }
@@ -258,9 +221,9 @@ void FooBar::find_it()
         //Homo-transform (bar frame"b" with respect to the camera"k")
         Eigen::Matrix4f Tkb;
         Tkb <<  X[0], Y[0], Z[0], center.x,
-                X[1], Y[1], Z[1], center.y,
-                X[2], Y[2], Z[2], center.z,
-                0,     0,    0,      1;
+            X[1], Y[1], Z[1], center.y,
+            X[2], Y[2], Z[2], center.z,
+            0,     0,    0,      1;
         PnC::Ptr hypo_transformed = boost::make_shared<PnC>();
         Eigen::Matrix4f Tbk = Tkb.inverse();
         //transform hypothesis cloud into its reference frame
@@ -272,19 +235,17 @@ void FooBar::find_it()
         found_wid = max.y - min.y;
         //The Check for Bar hypothesis
         if (found_len < (length_ - tolerance_) || found_len > (length_ + tolerance_) ||
-            found_wid < (width_ - tolerance_) || found_wid > (width_ + tolerance_)){
+                found_wid < (width_ - tolerance_) || found_wid > (width_ + tolerance_)){
             //This is not our bar, discard it
             ROS_WARN("[FooBar::%s]Hypothesis discarded (%g x %g).",__func__,
                     found_len, found_wid);
-            removeIndices(cloud_, inliers);
-            createMarker(found_len,found_wid,Tkb); //add to publishing
             boost::this_thread::sleep(boost::posix_time::milliseconds(10));
             continue;
         }
         //This plane is our bar!!
         tf::Matrix3x3 rot(  Tkb(0,0),Tkb(0,1),Tkb(0,2),
-                            Tkb(1,0),Tkb(1,1),Tkb(1,2),
-                            Tkb(2,0),Tkb(2,1),Tkb(2,2));
+                Tkb(1,0),Tkb(1,1),Tkb(1,2),
+                Tkb(2,0),Tkb(2,1),Tkb(2,2));
         tf::Vector3 trals(Tkb(0,3),Tkb(1,3),Tkb(2,3));
         transf_.setBasis(rot);
         transf_.setOrigin(trals);
