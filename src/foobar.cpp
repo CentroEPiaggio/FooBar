@@ -143,116 +143,64 @@ void FooBar::find_it()
         return;
     }
     processing = true;
-    //compute normals
-    ne.setInputCloud(cloud_);
-    ne.setRadiusSearch(normals_radius_);
-    ne.useSensorOriginAsViewPoint();
-    PnC::Ptr plane_and_normals = boost::make_shared<PnC>();
-    pcl::copyPointCloud(*cloud_,*plane_and_normals);
-    ne.compute(*plane_and_normals);
-    //Clusterize plane to enfore normal similarity
-    cec.setClusterTolerance(clus_tol_);
-    cec.setMinClusterSize(min_points_);
-    cec.setInputCloud(plane_and_normals);
-    cec.setConditionFunction(enforceCurvature);
-    std::vector<pcl::PointIndices> clus_indices;
-    cec.segment(clus_indices);
-    if (clus_indices.empty()){
-        //plane is not well defined
-        ROS_WARN("[FooBar::%s]Found plane is not well defined, discaring it.",__func__);
+    //find hypothesis centroid
+    Eigen::Vector4f centroid;
+    if (!pcl::compute3DCentroid(*cloud_, centroid)){
+        ROS_WARN("[FooBar::%s]Cannot calculate centroid for hypothesis, discaring it.",__func__);
+        boost::this_thread::sleep(boost::posix_time::milliseconds(10));
         return;
     }
-    PnC::Ptr hypothesis;
-    for (std::size_t i=0; i<clus_indices.size(); ++i)
-    {
-        hypothesis = boost::make_shared<PnC> (*plane_and_normals, clus_indices[i].indices);
-        if (hypothesis->size() < min_points_){
-            //plane is smaller than user set tolerance
-            ROS_WARN("[FooBar::%s]Candidate Bar is too small (%d points), discaring it.",__func__,hypothesis->size());
-            boost::this_thread::sleep(boost::posix_time::milliseconds(10));
-            continue;
-        }
-        //find hypothesis centroid
-        Eigen::Vector4f centroid;
-        if (!pcl::compute3DCentroid(*hypothesis, centroid)){
-            ROS_WARN("[FooBar::%s]Cannot calculate centroid for hypothesis, discaring it.",__func__);
-            boost::this_thread::sleep(boost::posix_time::milliseconds(10));
-            continue;
-        }
-        //Find the nearest point to the centroid
-        pcl::search::KdTree<Pn> ktree;
-        ktree.setInputCloud(hypothesis);
-        Pn pt_cent, center;
-        pt_cent.x = centroid[0];
-        pt_cent.y = centroid[1];
-        pt_cent.z = centroid[2];
-        std::vector<int> k_ind(1);
-        std::vector<float> k_dist(1);
-        ktree.nearestKSearch(pt_cent, 1, k_ind, k_dist);
-        center = hypothesis->points.at(k_ind[0]);
-        //Get principal components of hypothesis
-        pcl::PCA<Pn> pca(true);
-        pca.setInputCloud(hypothesis);
-        Eigen::Matrix3f pcaXYZ = pca.getEigenVectors();
-        //First eigenvector should be along the bar length, lets put X axis there
-        Eigen::Vector3f pcaX = pcaXYZ.block<3,1>(0,0);
-        //Put Z axis as the normal of the center (already computed)
-        Eigen::Vector3f Z (center.normal_x, center.normal_y, center.normal_z);
-        Z.normalize();
-        //See if we need to flip normal towards the camera, assuming viewpoint is (0,0,0)
-        Eigen::Vector3f cen(center.x,center.y,center.z);
-        float cos_theta = (-cen).dot(Z);
-        if (cos_theta < 0)
-            //Normal has to be flipped
-            Z *= -1;
-        //Now find an X axis as close as possible to pcaX but normal to Z,
-        //then find also Y as cross prod
-        Eigen::Vector3f X,Y;
-        pcaX.normalize();
-        if ( Z.isApprox(pcaX, 1e-4)){ //should never happen that Z==pcaX
-            ROS_WARN("[FooBar::%s]Cannot find a suitable basis for plane, discaring it.",__func__);
-            boost::this_thread::sleep(boost::posix_time::milliseconds(10));
-            continue;
-        }
-        X = pcaX - Z*(Z.dot(pcaX));
-        X.normalize();
-        Y = Z.cross(X);
-        Y.normalize();
-        //Homo-transform (bar frame"b" with respect to the camera"k")
-        Eigen::Matrix4f Tkb;
-        Tkb <<  X[0], Y[0], Z[0], center.x,
-            X[1], Y[1], Z[1], center.y,
-            X[2], Y[2], Z[2], center.z,
-            0,     0,    0,      1;
-        PnC::Ptr hypo_transformed = boost::make_shared<PnC>();
-        Eigen::Matrix4f Tbk = Tkb.inverse();
-        //transform hypothesis cloud into its reference frame
-        pcl::transformPointCloud(*hypothesis, *hypo_transformed, Tbk);
-        //now the hypothesis dimensions can be extracted easily
-        Pn min,max;
-        pcl::getMinMax3D(*hypo_transformed, min,max);
-        found_len = max.x - min.x;
-        found_wid = max.y - min.y;
-        //The Check for Bar hypothesis
-        if (found_len < (length_ - tolerance_) || found_len > (length_ + tolerance_) ||
-                found_wid < (width_ - tolerance_) || found_wid > (width_ + tolerance_)){
-            //This is not our bar, discard it
-            ROS_WARN("[FooBar::%s]Hypothesis discarded (%g x %g).",__func__,
-                    found_len, found_wid);
-            boost::this_thread::sleep(boost::posix_time::milliseconds(10));
-            continue;
-        }
-        //This plane is our bar!!
-        tf::Matrix3x3 rot(  Tkb(0,0),Tkb(0,1),Tkb(0,2),
-                Tkb(1,0),Tkb(1,1),Tkb(1,2),
-                Tkb(2,0),Tkb(2,1),Tkb(2,2));
-        tf::Vector3 trals(Tkb(0,3),Tkb(1,3),Tkb(2,3));
-        transf_.setBasis(rot);
-        transf_.setOrigin(trals);
-        createMarker(found_len,found_wid,Tkb); //add to publishing
-        ROS_INFO("[FooBar::%s]Found the Bar!",__func__);
-        break;
+    //Find the nearest point to the centroid
+    pcl::search::KdTree<Pt> ktree;
+    ktree.setInputCloud(cloud_);
+    Pt pt_cent, center;
+    pt_cent.x = centroid[0];
+    pt_cent.y = centroid[1];
+    pt_cent.z = centroid[2];
+    std::vector<int> k_ind(1);
+    std::vector<float> k_dist(1);
+    ktree.nearestKSearch(pt_cent, 1, k_ind, k_dist);
+    center = cloud_->points.at(k_ind[0]);
+    //Get principal components of hypothesis
+    pcl::PCA<Pt> pca(true);
+    pca.setInputCloud(cloud_);
+    Eigen::Matrix3f pcaXYZ = pca.getEigenVectors();
+    //First eigenvector should be along the bar length, lets put X axis there
+    Eigen::Vector3f pcaX = pcaXYZ.block<3,1>(0,0);
+    //Put Z axis as the normal of the center (already computed)
+    Eigen::Vector3f Z (0, 0, 1);
+    Z.normalize();
+    //See if we need to flip normal towards the camera, assuming viewpoint is (0,0,0)
+    Eigen::Vector3f cen(center.x,center.y,center.z);
+    float cos_theta = (-cen).dot(Z);
+    if (cos_theta < 0)
+        //Normal has to be flipped
+        Z *= -1;
+    //Now find an X axis as close as possible to pcaX but normal to Z,
+    //then find also Y as cross prod
+    Eigen::Vector3f X,Y;
+    pcaX.normalize();
+    if ( Z.isApprox(pcaX, 1e-4)){ //should never happen that Z==pcaX
+        ROS_WARN("[FooBar::%s]Cannot find a suitable basis for plane, discaring it.",__func__);
+        boost::this_thread::sleep(boost::posix_time::milliseconds(10));
+        return;
     }
+    X = pcaX - Z*(Z.dot(pcaX));
+    X.normalize();
+    Y = Z.cross(X);
+    Y.normalize();
+    //Homo-transform (bar frame"b" with respect to the camera"k")
+    Eigen::Matrix4f Tkb;
+    Tkb <<  X[0], Y[0], Z[0], center.x,
+        X[1], Y[1], Z[1], center.y,
+        X[2], Y[2], Z[2], center.z,
+        0,     0,    0,      1;
+    tf::Matrix3x3 rot(  Tkb(0,0),Tkb(0,1),Tkb(0,2),
+            Tkb(1,0),Tkb(1,1),Tkb(1,2),
+            Tkb(2,0),Tkb(2,1),Tkb(2,2));
+    tf::Vector3 trals(Tkb(0,3),Tkb(1,3),Tkb(2,3));
+    transf_.setBasis(rot);
+    transf_.setOrigin(trals);
     processing = false;
 }
 
